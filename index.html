@@ -1,0 +1,736 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Battle City PvP o Miedo</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/phaser/3.55.2/phaser.min.js"></script>
+<style>
+    body {
+        margin: 0;
+        padding: 0;
+        background: #000;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        min-height: 100vh;
+        font-family: 'Courier New', monospace;
+    }
+    #game-container {
+        position: relative;
+    }
+    #debug {
+        position: fixed;
+        top: 10px;
+        right: 10px;
+        background: rgba(0,0,0,0.9);
+        color: #00ff00;
+        padding: 10px;
+        font-family: 'Courier New', monospace;
+        font-size: 12px;
+        border: 1px solid #00ff00;
+        z-index: 1000;
+    }
+    #controls {
+        position: fixed;
+        bottom: 10px;
+        left: 10px;
+        background: rgba(0,0,0,0.9);
+        color: #00ff00;
+        padding: 10px;
+        font-family: 'Courier New', monospace;
+        font-size: 12px;
+        border: 1px solid #00ff00;
+        z-index: 1000;
+    }
+    #audio-controls {
+        position: fixed;
+        top: 10px;
+        left: 10px;
+        background: rgba(0,0,0,0.9);
+        color: #00ff00;
+        padding: 10px;
+        font-family: 'Courier New', monospace;
+        font-size: 12px;
+        border: 1px solid #00ff00;
+        z-index: 1000;
+    }
+    #color-select-modal {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100vw;
+        height: 100vh;
+        background: rgba(0, 0, 0, 0.7);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 1000;
+    }
+    #color-select-modal > div {
+        background: #222;
+        padding: 30px 40px;
+        border-radius: 12px;
+        text-align: center;
+        box-shadow: 0 0 20px #000;
+    }
+    #color-select-modal h2 {
+        color: #fff;
+    }
+    #color-select-modal label {
+        display: inline-block;
+        width: 100px;
+        text-align: right;
+        margin-right: 10px;
+    }
+    #color-select-modal button {
+        padding: 10px 30px;
+        font-size: 18px;
+        border-radius: 8px;
+        background: #ff0;
+        color: #222;
+        font-weight: bold;
+        cursor: pointer;
+        border: none;
+    }
+</style>
+</head>
+<body>
+<div id="game-container">
+    <div id="debug">
+        <div>Vidas: <span id="p1-lives">3</span></div>
+        <div>Salud: <span id="p1-health">100</span>%</div>
+    </div>
+    <div id="audio-controls">
+        <div><strong>AUDIO</strong></div>
+        <div>M - Silenciar música</div>
+        <div>N - Silenciar efectos</div>
+    </div>
+    <div id="controls">
+        <div><strong>BATALLA DE TANQUES</strong></div>
+        <div>Mover: ↑↓←→</div>
+        <div>Disparar: ESPACIO</div>
+        <div>R - Nueva ronda</div>
+        <div>Cubo amarillo super velocidad</div>
+        <div>Cubo celeste inmunidad</div>
+    </div>
+    <div id="color-select-modal" style="position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:1000;">
+      <div style="background:#222;padding:30px 40px;border-radius:12px;text-align:center;box-shadow:0 0 20px #000;">
+        <h2 style="color:#fff;">Elige el color de tu tanque</h2>
+        <div style="margin-bottom:20px;">
+          <label style="color:#0f0;">Tu Nick: </label>
+          <input type="text" id="p1-nick" value="" maxlength="12" style="width:120px;height:30px;">
+        </div>
+        <div style="margin-bottom:20px;">
+          <label style="color:#0f0;">Tu Color: </label>
+          <input type="color" id="p1-color" value="#00aa00" style="width:40px;height:40px;">
+        </div>
+        <button id="start-game-btn" style="padding:10px 30px;font-size:18px;border-radius:8px;background:#ff0;color:#222;font-weight:bold;cursor:pointer;">Iniciar partida</button>
+      </div>
+    </div>
+</div>
+
+<script>
+let selectedColor = 0x00aa00;
+let selectedNick = "";
+const modal = document.getElementById('color-select-modal');
+const p1ColorInput = document.getElementById('p1-color');
+const startBtn = document.getElementById('start-game-btn');
+const p1NickInput = document.getElementById('p1-nick');
+
+function hexToPhaserColor(hex) {
+  return parseInt(hex.replace('#', '0x'));
+}
+
+// Cargar nick guardado si existe
+const savedNick = localStorage.getItem('juego_nick');
+if (savedNick) p1NickInput.value = savedNick;
+
+startBtn.onclick = () => {
+    selectedNick = p1NickInput.value.trim() || "Jugador";
+    // persistir en localStorage
+    try { localStorage.setItem('juego_nick', selectedNick); } catch (e) {}
+    selectedColor = hexToPhaserColor(p1ColorInput.value);
+    modal.style.display = 'none';
+    game = new Phaser.Game(config);
+};
+
+let game;
+let player;
+let remotePlayers = {};
+let musicEnabled = true;
+let sfxEnabled = true;
+let backgroundMusic;
+
+const TANK_SPEED = 150;
+const BULLET_SPEED = 300;
+const SHOOT_COOLDOWN = 500;
+
+// Tamaño base del tanque (px). Reducir este valor para que quepan más jugadores.
+const TANK_SIZE = 30; // reducido un poco más para más jugadores
+
+function playSound(frequency, duration, type = 'square', volume = 0.3) {
+    if (!sfxEnabled) return;
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const oscillator = audioCtx.createOscillator();
+    const gainNode = audioCtx.createGain();
+    oscillator.type = type;
+    oscillator.frequency.value = frequency;
+    gainNode.gain.value = volume;
+    oscillator.connect(gainNode);
+    gainNode.connect(audioCtx.destination);
+    oscillator.start();
+    oscillator.stop(audioCtx.currentTime + duration);
+}
+
+class GameScene extends Phaser.Scene {
+    constructor() {
+        super({ key: 'GameScene' });
+    }
+
+    preload() {
+        this.load.audio('bgMusic', 'assets/audio/back.mp3');
+    }
+
+    create() {
+        connectWebSocket(this);
+        backgroundMusic = this.sound.add('bgMusic', { loop: true, volume: 0.3 });
+        if (musicEnabled) {
+            backgroundMusic.play();
+        }
+        // Ajusta los límites del mundo al tamaño de la ventana
+        this.physics.world.setBounds(0, 0, this.sys.game.config.width, this.sys.game.config.height);
+        this.cameras.main.setBackgroundColor('#112233');
+        // Bordes
+        this.add.rectangle(this.sys.game.config.width / 2, 10, this.sys.game.config.width, 20, 0x444444);
+        this.add.rectangle(this.sys.game.config.width / 2, this.sys.game.config.height - 10, this.sys.game.config.width, 20, 0x444444);
+        this.add.rectangle(10, this.sys.game.config.height / 2, 20, this.sys.game.config.height, 0x444444);
+        this.add.rectangle(this.sys.game.config.width - 10, this.sys.game.config.height / 2, 20, this.sys.game.config.height, 0x444444);
+
+        // Muros pequeños y distribuidos aleatoriamente
+        this.walls = this.physics.add.staticGroup();
+        // Generar muros proporcionales al tamaño del mapa
+        const area = this.sys.game.config.width * this.sys.game.config.height;
+        // base density: 1 wall por cada ~48000 px2 (ajustable)
+        const wallCount = Math.max(30, Math.round(area / 48000));
+        for (let i = 0; i < wallCount; i++) {
+            const wallWidth = Phaser.Math.Between(40, 100);
+            const wallHeight = Phaser.Math.Between(40, 100);
+            const x = Phaser.Math.Between(60, this.sys.game.config.width - 60);
+            const y = Phaser.Math.Between(60, this.sys.game.config.height - 60);
+            this.walls.create(x, y, null)
+                .setDisplaySize(wallWidth, wallHeight)
+                .setOrigin(0.5)
+                .refreshBody();
+        }
+
+        this.cursors = this.input.keyboard.createCursorKeys();
+        this.spaceKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
+        this.rKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.R);
+        this.mKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.M);
+        this.nKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.N);
+        this.powerUps = this.physics.add.group();
+        
+    const g = this.add.graphics();
+    g.fillStyle(0xffffff, 1);
+    // Radio de la bala proporcional al tanque
+    const bulletRadius = Math.max(3, Math.round(TANK_SIZE * 0.15));
+    g.fillCircle(bulletRadius, bulletRadius, bulletRadius);
+    g.generateTexture('bulletCircle', bulletRadius * 2, bulletRadius * 2);
+    g.destroy();
+        this.bullets = this.physics.add.group({
+            defaultKey: 'bulletCircle',
+            maxSize: 50,
+            collideWorldBounds: false
+        });
+        this.activeBullets = [];
+        this.roundText = this.add.text(this.sys.game.config.width/2, 50, '¡ESPERANDO JUGADORES!', {
+            fontSize: '32px', fill: '#ffff00', fontFamily: 'Courier New'
+        }).setOrigin(0.5);
+    }
+
+    createTank(id, x, y, color, nick = "Jugador") {
+        const tankGraphics = this.add.graphics();
+    // Barra de vida proporcional al tamaño del tanque
+    const healthBarWidth = Math.max(30, Math.round(TANK_SIZE * 1.15));
+    const healthBarHeight = Math.max(4, Math.round(TANK_SIZE * 0.12));
+    const healthBarY = Math.round(TANK_SIZE / 2) + 6;
+    const healthBg = this.add.rectangle(0, healthBarY, healthBarWidth + 2, healthBarHeight + 2, 0x444444);
+    const healthBar = this.add.rectangle(0, healthBarY, healthBarWidth, healthBarHeight, 0x00ff00);
+
+        // Nickname text
+        const nickText = this.add.text(0, healthBarY + healthBarHeight + 6, nick, {
+            fontSize: '14px',
+            fill: '#fff',
+            fontFamily: 'Courier New'
+        }).setOrigin(0.5, 0);
+
+        const tankContainer = this.add.container(x, y, [tankGraphics, healthBg, healthBar, nickText]);
+        this.physics.add.existing(tankContainer);
+    tankContainer.body.setSize(TANK_SIZE, TANK_SIZE).setOffset(-TANK_SIZE/2, -TANK_SIZE/2).setCollideWorldBounds(true);
+
+        // Colisión física con muros
+        this.physics.add.collider(tankContainer, this.walls);
+
+        const tankData = {
+            id: id, sprite: tankContainer, graphics: tankGraphics,
+            health: 100, maxHealth: 100, lives: 3, lastShot: 0,
+            direction: { x: 0, y: -1 }, isAlive: true, healthBar: healthBar,
+            originalColor: color, isShielded: false, isSpeedBoosted: false,
+            nickText: nickText,
+            maxHealthBarWidth: healthBarWidth
+        };
+        this.updateTankGraphics(tankData);
+        return tankData;
+    }
+    
+    updateTankGraphics(tankData) {
+        const g = tankData.graphics;
+        g.clear();
+        g.fillStyle(tankData.originalColor);
+        g.fillRect(-TANK_SIZE/2, -TANK_SIZE/2, TANK_SIZE, TANK_SIZE);
+        const cannonColor = Phaser.Display.Color.ValueToColor(tankData.originalColor).darken(20).color;
+        g.fillStyle(cannonColor);
+        // Cañón proporcional
+        const cannonW = Math.max(4, Math.round(TANK_SIZE * 0.2));
+        const cannonH = Math.max(8, Math.round(TANK_SIZE * 0.45));
+        g.fillRect(-Math.round(cannonW/2), -Math.round(TANK_SIZE/2) - Math.round(cannonH/2), cannonW, cannonH);
+    }
+
+    update() {
+        if (Phaser.Input.Keyboard.JustDown(this.mKey)) {
+            musicEnabled = !musicEnabled;
+            musicEnabled ? backgroundMusic.play() : backgroundMusic.stop();
+        }
+        if (Phaser.Input.Keyboard.JustDown(this.nKey)) {
+            sfxEnabled = !sfxEnabled;
+        }
+        if (Phaser.Input.Keyboard.JustDown(this.rKey)) {
+            this.scene.restart();
+        }
+        if (player && player.isAlive) {
+            this.updatePlayer();
+        }
+        this.updateBullets();
+        this.checkBulletCollisions();
+        if (player) {
+           this.updateUI();
+        }
+    }
+
+    updateBullets() {
+        this.activeBullets = this.activeBullets.filter(bulletData => {
+            if (!bulletData.bullet.active) return false;
+            // Colisión con muros
+            if (this.physics.overlap(bulletData.bullet, this.walls)) {
+                this.destroyBullet(bulletData);
+                return false;
+            }
+            if (bulletData.bullet.x < 10 || bulletData.bullet.x > this.sys.game.config.width - 10 ||
+                bulletData.bullet.y < 10 || bulletData.bullet.y > this.sys.game.config.height - 10) {
+                this.destroyBullet(bulletData);
+                return false;
+            }
+            return true;
+        });
+    }
+
+    checkBulletCollisions() {
+        this.activeBullets.forEach(bulletData => {
+            if (!bulletData.bullet.active) return;
+            
+            // Cuando el jugador local recibe un disparo de otro
+            if (bulletData.shooterId !== myId && player && player.isAlive) {
+                if (this.physics.overlap(bulletData.bullet, player.sprite)) {
+                    // ENVÍA el evento "hit" al servidor
+                    if (ws && ws.readyState === WebSocket.OPEN) {
+                        ws.send(JSON.stringify({ type: "hit", targetId: myId }));
+                    }
+                    this.destroyBullet(bulletData);
+                    return;
+                }
+            }
+
+            if (bulletData.shooterId === myId) {
+                for (const id in remotePlayers) {
+                    const remote = remotePlayers[id];
+                    if (remote.isAlive && this.physics.overlap(bulletData.bullet, remote.sprite)) {
+                        if (ws && ws.readyState === WebSocket.OPEN) {
+                            ws.send(JSON.stringify({ type: "hit", targetId: id }));
+                        }
+                        this.destroyBullet(bulletData);
+                        return;
+                    }
+                }
+            }
+        });
+    }
+
+    spawnPowerUp() {
+        const types = ['shield', 'speed'];
+        const type = Phaser.Utils.Array.GetRandom(types);
+        const x = Phaser.Math.Between(100, 700);
+        const y = Phaser.Math.Between(100, 500);
+        const color = (type === 'shield') ? 0x00ffff : 0xffff00;
+        const powerUp = this.add.rectangle(x, y, 20, 20, color);
+        this.physics.add.existing(powerUp);
+        powerUp.body.setImmovable(true);
+        powerUp.type = type;
+        this.powerUps.add(powerUp);
+    }
+    
+    collectPowerUp(p, powerUp){
+        if (!powerUp.active) return;
+        // Envía al servidor que este jugador recogió el power-up
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({
+                type: "collectPowerUp",
+                powerUp: { type: powerUp.type, x: powerUp.x, y: powerUp.y },
+                playerId: p.id
+            }));
+        }
+        // Elimina localmente solo cuando el servidor lo confirme
+    }
+
+    // --- CORRECCIÓN: Esta función ahora solo desactiva la bala ---
+    // La eliminación del array se hace en `updateBullets`
+    destroyBullet(bulletData) {
+        if (bulletData.bullet && bulletData.bullet.active) {
+            bulletData.bullet.disableBody(true, true);
+        }
+    }
+
+    updatePlayer() {
+        const sprite = player.sprite;
+        sprite.body.setVelocity(0);
+        const speed = player.isSpeedBoosted ? TANK_SPEED * 1.8 : TANK_SPEED;
+        let moved = false;
+        if (this.cursors.left.isDown) {
+            sprite.body.setVelocityX(-speed);
+            sprite.setRotation(-Math.PI / 2);
+            player.direction = { x: -1, y: 0 };
+            moved = true;
+        } else if (this.cursors.right.isDown) {
+            sprite.body.setVelocityX(speed);
+            sprite.setRotation(Math.PI / 2);
+            player.direction = { x: 1, y: 0 };
+            moved = true;
+        } else if (this.cursors.up.isDown) {
+            sprite.body.setVelocityY(-speed);
+            sprite.setRotation(0);
+            player.direction = { x: 0, y: -1 };
+            moved = true;
+        } else if (this.cursors.down.isDown) {
+            sprite.body.setVelocityY(speed);
+            sprite.setRotation(Math.PI);
+            player.direction = { x: 0, y: 1 };
+            moved = true;
+        }
+        if (Phaser.Input.Keyboard.JustDown(this.spaceKey) && this.time.now > player.lastShot) {
+            this.shoot(player);
+            player.lastShot = this.time.now + SHOOT_COOLDOWN;
+        }
+        if (moved && ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({
+                type: "move",
+                position: { x: sprite.x, y: sprite.y },
+                rotation: sprite.rotation
+            }));
+        }
+        this.physics.overlap(sprite, this.powerUps, (s, powerUp) => {
+            this.collectPowerUp(player, powerUp);
+        });
+    }
+
+    shoot(p) {
+        playSound(200, 0.15, 'square', 0.4);
+
+    const offsetX = p.direction.x * Math.round(TANK_SIZE * 1.2);
+    const offsetY = p.direction.y * Math.round(TANK_SIZE * 1.2);
+        const bulletStartX = p.sprite.x + offsetX;
+        const bulletStartY = p.sprite.y + offsetY;
+
+        const bullet = this.bullets.get(bulletStartX, bulletStartY);
+        if (!bullet) return;
+        
+        bullet.setActive(true).setVisible(true).setTint(p.originalColor);
+        bullet.body.enable = true;  // 🔥 Asegura que el cuerpo esté activo siempre
+    bullet.body.setCircle(Math.max(3, Math.round(TANK_SIZE * 0.15)));
+        bullet.body.reset(bulletStartX, bulletStartY); // 🔥 Resetea posición física
+
+        // 🔥 Usa la dirección en vez de la rotación corregida
+        bullet.body.setVelocity(p.direction.x * BULLET_SPEED, p.direction.y * BULLET_SPEED);
+        
+        const bulletData = { bullet: bullet, shooterId: p.id };
+        this.activeBullets.push(bulletData);
+        
+        this.cameras.main.shake(80, 0.02);
+        
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ 
+                type: "shoot", 
+                direction: p.direction,
+                startPos: { x: bulletStartX, y: bulletStartY }
+            }));
+        }
+    }
+    
+    remoteShoot(shooterId, direction, startPos) {
+    if (!remotePlayers[shooterId] || !startPos) return;
+    playSound(150, 0.1, 'sawtooth');
+
+    const bullet = this.bullets.get(startPos.x, startPos.y);
+    if (!bullet) return;
+
+    bullet.setActive(true).setVisible(true).setTint(remotePlayers[shooterId].originalColor);
+    bullet.body.enable = true;  // 🔥 asegurar cuerpo activo
+    bullet.body.setCircle(Math.max(3, Math.round(TANK_SIZE * 0.15)));
+    bullet.body.reset(startPos.x, startPos.y); // 🔥 reinicia física
+
+    // 🔥 usa la dirección enviada por el servidor
+    bullet.body.setVelocity(direction.x * BULLET_SPEED, direction.y * BULLET_SPEED);
+
+    const bulletData = { bullet: bullet, shooterId: shooterId };
+    this.activeBullets.push(bulletData);
+}
+    
+    updatePlayerHealth(p, newHealth, newLives) {
+        if (!p) return;
+
+        // Si el jugador tiene escudo y fue golpeado
+        if (p.isShielded && typeof p.shieldHits === 'number' && p.shieldHits > 0 && newHealth < p.health) {
+            p.shieldHits--;
+            if (p.shieldHits <= 0) {
+                p.isShielded = false;
+                p.sprite.setAlpha(1);
+            }
+            // No reducir la vida si el escudo bloquea el golpe
+            return;
+        }
+
+        p.health = newHealth;
+        p.lives = newLives;
+
+        const healthPercent = p.health / p.maxHealth;
+        // Usar el ancho proporcional guardado en tankData
+        if (typeof p.maxHealthBarWidth === 'number') {
+            p.healthBar.width = p.maxHealthBarWidth * healthPercent;
+        } else {
+            p.healthBar.width = 58 * healthPercent;
+        }
+
+        if (p.health > 60) p.healthBar.setFillStyle(0x00ff00);
+        else if (p.health > 30) p.healthBar.setFillStyle(0xffaa00);
+        else p.healthBar.setFillStyle(0xff4444);
+
+        if (p.id === myId) {
+            this.updateUI();
+        }
+
+        if (p.health <= 0 && p.lives > 0) {
+            this.respawnPlayer(p);
+        } else if (p.lives <= 0) {
+            p.isAlive = false;
+            // Elimina el cuerpo físico del tanque
+            if (p.sprite.body) {
+                p.sprite.body.destroy();
+            }
+            p.sprite.destroy();
+            if (p.id === myId) {
+                this.add.text(400, 300, 'FIN DEL JUEGO\nPresiona R para reiniciar', {
+                    fontSize: '32px', fill: '#ff0000', fontFamily: 'Courier New', align: 'center'
+                }).setOrigin(0.5);
+            }
+        }
+    }
+
+    respawnPlayer(p) {
+        p.isAlive = true;
+    p.sprite.setPosition(Phaser.Math.Between(50, this.sys.game.config.width - 50), Phaser.Math.Between(50, this.sys.game.config.height - 50));
+        p.sprite.setAlpha(0.5);
+        this.tweens.add({ targets: p.sprite, alpha: 1, duration: 1000, ease: 'Linear' });
+        playSound(400, 0.3, 'sine', 0.2);
+    }
+    
+    updateUI() {
+        document.getElementById('p1-lives').textContent = player.lives;
+        document.getElementById('p1-health').textContent = Math.round(player.health);
+    }
+}
+
+const config = {
+    type: Phaser.AUTO,
+    width: 1600,
+    height: 900,
+    parent: 'game-container',
+    physics: { default: 'arcade', arcade: { gravity: { y: 0 }, debug: false } },
+    scene: GameScene,
+    backgroundColor: '#112233'
+};
+
+let ws;
+let myId = null;
+
+function connectWebSocket(scene) {
+    ws = new WebSocket(`ws://${window.location.hostname}:8080`);
+    ws.onopen = () => {
+        ws.send(JSON.stringify({ type: "color", color: selectedColor, nick: selectedNick }));
+    };
+    
+    ws.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        if (scene.roundText) { scene.roundText.destroy(); scene.roundText = null; }
+        
+        switch(data.type) {
+            case "full":
+                alert("Sala llena. Máximo 25 jugadores.");
+                break;
+            case "init":
+                myId = data.id;
+                // Genera los muros usando los datos enviados por el servidor
+                if (scene.walls) scene.walls.clear(true, true);
+                scene.walls = scene.physics.add.staticGroup();
+                if (data.walls) {
+                    data.walls.forEach(wall => {
+                        // Crea un rectángulo verde con colisión perfectamente alineada
+                        const wallRect = scene.add.rectangle(wall.x, wall.y, wall.width, wall.height, 0x00ff00)
+                            .setOrigin(0.5, 0.5);
+                        scene.physics.add.existing(wallRect, true); // Static body
+                        scene.walls.add(wallRect);
+                    });
+                }
+                // Crear power-ups iniciales enviados por el servidor
+                if (data.powerUps && Array.isArray(data.powerUps)) {
+                    data.powerUps.forEach(pu => {
+                        if (pu) scene.spawnPowerUpFromServer(pu);
+                    });
+                }
+                // Crea los tanques
+                data.players.forEach(p_data => {
+                    if (p_data.id === myId) {
+                        player = scene.createTank(myId, p_data.position.x, p_data.position.y, selectedColor, p_data.nick || selectedNick);
+                    } else {
+                        remotePlayers[p_data.id] = scene.createTank(p_data.id, p_data.position.x, p_data.position.y, p_data.color, p_data.nick || "Jugador");
+                    }
+                });
+                // --- Asegura la colisión física entre todos los tanques y los muros ---
+    if (player) scene.physics.add.collider(player.sprite, scene.walls);
+    Object.values(remotePlayers).forEach(rp => {
+        scene.physics.add.collider(rp.sprite, scene.walls);
+    });
+    break;
+            case "newPlayer":
+                if (data.player.id !== myId) {
+                    remotePlayers[data.player.id] = scene.createTank(data.player.id, data.player.position.x, data.player.position.y, data.player.color, data.player.nick || "Jugador");
+                }
+                break;
+            case "color":
+                // Actualizar color y nick de un jugador remoto
+                if (remotePlayers[data.id]) {
+                    remotePlayers[data.id].originalColor = data.color;
+                    // si viene nick, actualizar el texto
+                    if (data.nick) {
+                        const p = remotePlayers[data.id];
+                        p.nickText && p.nickText.setText(data.nick);
+                    }
+                    scene.updateTankGraphics(remotePlayers[data.id]);
+                }
+                break;
+            case "banned":
+                // Servidor indica que esta IP está prohibida
+                alert('Has sido expulsado de la partida (IP baneada). No podrás volver a entrar.');
+                // Evitar reintentos de conexión: cerrar socket y no volver a crear uno
+                if (ws && ws.readyState === WebSocket.OPEN) ws.close();
+                break;
+            case "move":
+                if (remotePlayers[data.id]) {
+                    scene.tweens.add({
+                        targets: remotePlayers[data.id].sprite,
+                        x: data.position.x,
+                        y: data.position.y,
+                        rotation: data.rotation,
+                        duration: 100
+                    });
+                }
+                break;
+            case "shoot":
+                if (remotePlayers[data.id]) {
+                    scene.remoteShoot(data.id, data.direction, data.position);
+                }
+                break;
+            
+            case "healthUpdate":
+                let targetPlayer = (data.id === myId) ? player : remotePlayers[data.id];
+                if (targetPlayer) {
+                    scene.updatePlayerHealth(targetPlayer, data.health, data.lives);
+                }
+                break;
+
+            case "remove":
+                if (remotePlayers[data.id]) {
+                    // Elimina el cuerpo físico si existe
+                    if (remotePlayers[data.id].sprite.body) {
+                        remotePlayers[data.id].sprite.body.destroy();
+                    }
+                    remotePlayers[data.id].sprite.destroy();
+                    delete remotePlayers[data.id];
+                }
+                // Si el jugador local muere y el servidor lo elimina
+                if (data.id === myId && player) {
+                    if (player.sprite.body) {
+                        player.sprite.body.destroy();
+                    }
+                    player.sprite.destroy();
+                }
+                break;
+            case "powerUp":
+                if (scene && data.powerUp) {
+                    scene.spawnPowerUpFromServer(data.powerUp);
+                }
+                break;
+            case "powerUpCollected":
+                // Elimina el power-up en todos los clientes
+                scene.powerUps.getChildren().forEach(pu => {
+                    if (pu.type === data.powerUp.type && pu.x === data.powerUp.x && pu.y === data.powerUp.y) {
+                        pu.destroy();
+                    }
+                });
+                // Aplica el efecto al jugador correspondiente
+                let affectedPlayer = (data.playerId === myId) ? player : remotePlayers[data.playerId];
+                if (affectedPlayer) {
+                    if (data.powerUp.type === 'shield'){
+                        affectedPlayer.isShielded = true;
+                        affectedPlayer.shieldHits = 2; // <-- Nuevo: contador de impactos
+                        affectedPlayer.sprite.setAlpha(0.6);
+                        // El escudo dura hasta recibir 2 disparos, no por tiempo
+                    }
+                    else if (data.powerUp.type === 'speed'){
+                        affectedPlayer.isSpeedBoosted = true;
+                        scene.time.delayedCall(5000, () => {
+                            affectedPlayer.isSpeedBoosted = false;
+                        });
+                    }
+                }
+                break;
+        }
+    };
+}
+
+// Agrega este método en GameScene:
+GameScene.prototype.spawnPowerUpFromServer = function(powerUpData) {
+    const color = (powerUpData.type === 'shield') ? 0x00ffff : 0xffff00;
+    const powerUp = this.add.rectangle(powerUpData.x, powerUpData.y, 20, 20, color);
+    this.physics.add.existing(powerUp);
+    powerUp.body.setImmovable(true);
+    powerUp.type = powerUpData.type;
+    this.powerUps.add(powerUp);
+};
+
+// Opcional: Redimensiona el juego si cambia el tamaño de la ventana
+window.addEventListener('resize', () => {
+    if (game && game.scale) {
+        game.scale.resize(window.innerWidth, window.innerHeight);
+    }
+});
+</script>
+</body>
+</html>
